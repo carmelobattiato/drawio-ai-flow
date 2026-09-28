@@ -1,0 +1,6 @@
+{
+  "name": "DrawIO AI Flow Studio",
+  "description": "Transform documents (DOCX, PPTX, PDF, Excel) and chat prompts into professional Draw.io diagrams with AI, live rendering, and PNG/drawio exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
