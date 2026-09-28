@@ -19,6 +19,10 @@ export interface ApiConfig {
 
   // Common parameters
   temperature: number;
+
+  // Icon rendering: 'embed' inlines official SVGs as base64 (offline, heavier),
+  // 'url' keeps remote CDN URLs (lighter, needs network)
+  iconMode?: 'embed' | 'url';
 }
 
 export interface ImageAttachment {

@@ -43,6 +43,7 @@ export const DEFAULT_API_CONFIG: ApiConfig = {
   geminiApiKey: '',
   geminiModel: 'gemini-3.8-flash',
   temperature: 0.1,
+  iconMode: 'embed',
 };
 
 /**

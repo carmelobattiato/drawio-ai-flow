@@ -6,7 +6,7 @@
  * plus official draw.io shape styles for AWS, Azure, GCP, Kubernetes, Cisco, UML, BPMN.
  */
 
-import { getRichCloudIconUrl } from './cloudIconAssets';
+import { resolveCellIcon, IconMode } from './iconResolver';
 
 export interface IconDefinition {
   id: string;
@@ -585,7 +585,7 @@ export function getDrawioBrandIconStyle(icon: IconDefinition): string {
  * - Converts cloud/AI components into full-color vector icons
  * - Generates custom vector badges for any unrecognized components so ZERO broken icons ever appear!
  */
-export function enhanceDrawioXmlWithIcons(xml: string): string {
+export async function enhanceDrawioXmlWithIcons(xml: string, iconMode: IconMode = 'embed'): Promise<string> {
   if (!xml || typeof window === 'undefined') return xml;
 
   try {
@@ -594,15 +594,15 @@ export function enhanceDrawioXmlWithIcons(xml: string): string {
     const parserErrors = doc.getElementsByTagName('parsererror');
     if (parserErrors.length > 0) return xml;
 
-    const cells = doc.querySelectorAll('mxCell[vertex="1"]');
+    const cells = Array.from(doc.querySelectorAll('mxCell[vertex="1"]'));
     let modified = false;
 
-    cells.forEach((cell) => {
+    for (const cell of cells) {
       const value = cell.getAttribute('value') || '';
       const style = cell.getAttribute('style') || '';
       const cleanValue = value.replace(/<[^>]+>/g, '').trim();
 
-      if (!cleanValue) return;
+      if (!cleanValue) continue;
 
       const isSwimlane = style.includes('swimlane') || style.includes('shape=swimlane');
       const isRhombus = style.includes('rhombus') || style.includes('shape=rhombus');
@@ -613,21 +613,22 @@ export function enhanceDrawioXmlWithIcons(xml: string): string {
       const isCloudShape = style.includes('shape=mxgraph.') || style.includes('shape=cloud');
 
       // Do not convert swimlanes/flowchart decisions to icons
-      if (isSwimlane || isRhombus || isActor || isCylinder || isDocument) return;
+      if (isSwimlane || isRhombus || isActor || isCylinder || isDocument) continue;
 
       const geom = cell.querySelector('mxGeometry');
       const width = geom ? parseFloat(geom.getAttribute('width') || '100') : 100;
       const height = geom ? parseFloat(geom.getAttribute('height') || '60') : 60;
 
       // Do not convert large layout boxes (> 200px width and > 140px height) unless explicitly an image
-      if (width > 200 && height > 140 && !isImage) return;
+      if (width > 200 && height > 140 && !isImage) continue;
 
       // Only convert to image if explicitly an image/stencil or matching a recognized cloud/AI service
       const isRecognizedService = Boolean(findBrandIcon(cleanValue) || findOfficialShape(cleanValue) || isCloudShape);
 
       if (isImage || (isRecognizedService && width <= 140 && height <= 140)) {
-        const richCloudIcon = getRichCloudIconUrl(cleanValue);
-        const newStyle = `shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;align=center;aspect=fixed;imageAspect=0;image=${richCloudIcon};`;
+        const existingImageUrl = style.match(/image=([^;]+)/)?.[1];
+        const resolvedIcon = await resolveCellIcon(cleanValue, existingImageUrl, iconMode);
+        const newStyle = `shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;align=center;aspect=fixed;imageAspect=0;image=${resolvedIcon};`;
         cell.setAttribute('style', newStyle);
         if (geom && (geom.getAttribute('width') !== '64' || geom.getAttribute('height') !== '64')) {
           geom.setAttribute('width', '64');
@@ -635,7 +636,7 @@ export function enhanceDrawioXmlWithIcons(xml: string): string {
         }
         modified = true;
       }
-    });
+    }
 
     if (modified) {
       const serializer = new XMLSerializer();

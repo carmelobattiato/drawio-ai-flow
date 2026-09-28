@@ -15,8 +15,10 @@ export function utf8ToBase64(str: string): string {
 
 export function svgToDataUri(svg: string): string {
   const cleaned = svg.replace(/\s+/g, ' ').trim();
-  const base64 = utf8ToBase64(cleaned);
-  return `data:image/svg+xml;base64,${base64}`;
+  // URL-encoded (comma) form, NOT ";base64": a draw.io style is "key=value;key=value",
+  // so a value containing ";" (as in "data:image/svg+xml;base64,") gets truncated by the
+  // style parser and the icon renders as a broken image. encodeURIComponent escapes ";".
+  return `data:image/svg+xml,${encodeURIComponent(cleaned)}`;
 }
 
 // -----------------------------------------------------------------------------------------

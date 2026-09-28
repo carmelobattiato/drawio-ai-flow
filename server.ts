@@ -10,21 +10,50 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = parseInt(process.env.PORT || '3000', 10);
+const port = parseInt(process.env.PORT || '8090', 10);
 
 app.use(express.json({ limit: '30mb' }));
 
 // Helper to initialize GenAI client with custom or system key
 function getGenAIClient(customApiKey?: string): GoogleGenAI {
-  const key = (customApiKey && customApiKey.trim().length > 5) 
-    ? customApiKey.trim() 
-    : process.env.GEMINI_API_KEY;
+  const key = (customApiKey && customApiKey.trim().length > 5)
+    ? customApiKey.trim()
+    : undefined;
 
   if (!key) {
-    throw new Error('Nessuna chiave API Gemini trovata (né di sistema né personalizzata).');
+    throw new Error('Chiave API Gemini personalizzata mancante. Inseriscila nelle Impostazioni.');
   }
 
   return new GoogleGenAI({ apiKey: key });
+}
+
+// Blocks SSRF: rejects private/link-local/loopback targets.
+// Loopback allowed only in dev (local Ollama preset).
+function isSafeOutboundUrl(rawUrl: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+
+  const host = u.hostname.toLowerCase();
+  const allowLoopback = process.env.NODE_ENV !== 'production';
+
+  if (host === 'localhost' || host.endsWith('.localhost')) return allowLoopback;
+  if (host === '::1') return allowLoopback;
+  if (host.startsWith('fd') || host.startsWith('fe80')) return false;
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    const p = host.split('.').map(Number);
+    if (p[0] === 127) return allowLoopback;
+    if (p[0] === 0 || p[0] === 10) return false;
+    if (p[0] === 169 && p[1] === 254) return false;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return false;
+    if (p[0] === 192 && p[1] === 168) return false;
+  }
+  return true;
 }
 
 // -------------------------------------------------------------
@@ -177,6 +206,13 @@ app.post('/api/custom-ai/test', async (req, res) => {
       });
     }
 
+    if (!isSafeOutboundUrl(cleanUrl)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Endpoint Custom AI non consentito.',
+      });
+    }
+
     // Try /models first, fallback to lightweight /chat/completions
     let modelsRes = await fetch(`${cleanUrl}/models`, {
       method: 'GET',
@@ -238,6 +274,12 @@ app.post('/api/custom-ai/generate', async (req, res) => {
     if (!apiKey || apiKey.trim().length === 0) {
       return res.status(400).json({
         error: { message: 'Chiave API o Token Custom AI mancante.' }
+      });
+    }
+
+    if (!isSafeOutboundUrl(cleanUrl)) {
+      return res.status(400).json({
+        error: { message: 'Endpoint Custom AI non consentito.' }
       });
     }
 
@@ -319,9 +361,8 @@ app.post('/api/custom-ai/generate', async (req, res) => {
 
 // API endpoint to test Gemini system connectivity
 app.get('/api/gemini/status', async (req, res) => {
-  const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.length > 5);
   return res.json({
-    hasSystemKey: hasKey,
+    hasSystemKey: false,
     defaultModel: 'gemini-3.8-flash',
   });
 });

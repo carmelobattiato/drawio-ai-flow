@@ -11,7 +11,8 @@ import {
   Sliders,
   Globe,
   Cpu,
-  CheckCheck
+  CheckCheck,
+  Image as ImageIcon
 } from 'lucide-react';
 import { ApiConfig, AiProvider } from '../types';
 import { 
@@ -448,6 +449,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex justify-between text-[10px] text-slate-500 mt-1">
               <span>0.0 (Massima coerenza geometrica XML)</span>
               <span>1.0 (Più discorsivo)</span>
+            </div>
+          </div>
+
+          {/* Icon mode: embed vs URL */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5 mb-2">
+              <ImageIcon className="w-3.5 h-3.5 text-indigo-600" /> Logo ufficiali
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, iconMode: 'embed' })}
+                className={`p-2 rounded-lg border text-left transition-colors ${
+                  (formData.iconMode || 'embed') === 'embed'
+                    ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-300'
+                    : 'bg-white border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <span className="block text-xs font-bold text-slate-800">Incorpora (offline)</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">Base64 nel file. Funziona senza internet, file più pesante.</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, iconMode: 'url' })}
+                className={`p-2 rounded-lg border text-left transition-colors ${
+                  formData.iconMode === 'url'
+                    ? 'bg-indigo-50 border-indigo-400 ring-1 ring-indigo-300'
+                    : 'bg-white border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <span className="block text-xs font-bold text-slate-800">URL (leggero)</span>
+                <span className="block text-[10px] text-slate-500 mt-0.5">Link CDN. File leggero, richiede internet all'apertura.</span>
+              </button>
             </div>
           </div>
 

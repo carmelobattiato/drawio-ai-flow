@@ -8,6 +8,9 @@ import {
 } from 'lucide-react';
 import { ApiConfig } from '../types';
 
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
+
 interface HeaderProps {
   apiConfig: ApiConfig;
   onOpenSettings: () => void;
@@ -34,6 +37,9 @@ export const Header: React.FC<HeaderProps> = ({
               <h1 className="text-base font-extrabold text-slate-900 tracking-tight">
                 DrawIO AI Flow Studio
               </h1>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200 font-mono">
+                v{APP_VERSION}
+              </span>
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-2xs">
                 Developed by Carmelo Battiato
               </span>

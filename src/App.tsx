@@ -166,7 +166,7 @@ Incolla un'immagine, carica un file .drawio o scrivi una richiesta per iniziare!
       let newDiagramData: DiagramData | undefined;
 
       if (extractedXml) {
-        const enhancedXml = enhanceDrawioXmlWithIcons(extractedXml);
+        const enhancedXml = await enhanceDrawioXmlWithIcons(extractedXml, apiConfig.iconMode || 'embed');
         newDiagramData = {
           id: `diag_${Date.now()}`,
           title: docContext ? `Workflow: ${docContext.name}` : (currentDiagram ? `${currentDiagram.title} (Modificato)` : 'Diagramma Generato'),

@@ -8,6 +8,21 @@ il versioning è MAJOR.MINOR.
 
 ---
 
+## [0.2] — 2026-09-29
+
+### Aggiunto
+- Toggle "Logo ufficiali" nelle impostazioni: modalità **Incorpora** (SVG in base64/data URI nel diagramma, funziona offline, file più pesante) o **URL** (link CDN, file leggero, richiede internet). Nuovo campo `iconMode` in `ApiConfig`, default `embed`.
+- Controllo di validità sulle icone prima del rilascio (`isValidDrawioImage`): un'icona ufficiale irraggiungibile (404/timeout/non-SVG) o malformata viene sostituita da un badge custom generato, così non compaiono mai icone rotte.
+- Versione applicazione mostrata nell'header, letta da `package.json`.
+
+### Cambiato
+- Le icone dei provider ora usano i **logo ufficiali** (`@lobehub/icons-static-svg` e `simple-icons` via CDN), come la skill di riferimento, invece delle approssimazioni disegnate a mano. Il badge custom con le iniziali è usato solo come fallback quando il logo ufficiale non è disponibile.
+
+### Corretto
+- Icone rese come "immagine rotta" in draw.io: i data URI usavano la forma `data:image/svg+xml;base64,...` il cui `;` veniva interpretato come separatore di proprietà dello stile draw.io, troncando il valore. Ora si usa la forma URL-encoded `data:image/svg+xml,<encoded>` senza `;`, valida sia in draw.io sia nel browser.
+
+---
+
 ## [0.1] — 2026-09-29
 
 - Primo commit — inizializzazione del progetto drawio-ai-flow

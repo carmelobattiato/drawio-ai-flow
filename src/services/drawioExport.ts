@@ -1,5 +1,5 @@
 import { ParsedGraph, parseMxGraphXml } from './drawioParser';
-import { getRichCloudIconUrl, getRichCloudIconSvg } from './cloudIconAssets';
+import { getRichCloudIconUrl, getRichCloudIconSvg, generateCustomComponentBadge } from './cloudIconAssets';
 
 /**
  * Converts external SVG / image URLs inside SVG string to base64 Data URIs
@@ -13,20 +13,26 @@ export async function inlineSvgImages(svgText: string): Promise<string> {
   let inlinedSvg = svgText;
 
   for (const url of uniqueUrls) {
+    let replacement: string | null = null;
     try {
       const res = await fetch(url);
       if (res.ok) {
         const blob = await res.blob();
-        const base64Data = await new Promise<string>((resolve) => {
+        replacement = await new Promise<string>((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
           reader.readAsDataURL(blob);
         });
-        inlinedSvg = inlinedSvg.replaceAll(`href="${url}"`, `href="${base64Data}"`);
       }
     } catch (e) {
       console.warn('[drawioExport] Could not inline image URL:', url, e);
     }
+    // Unreachable official icon: swap for a custom badge so no broken box appears.
+    if (replacement === null) {
+      const label = decodeURIComponent(url.split('/').pop() || 'AI').replace(/\.[a-z0-9]+$/i, '');
+      replacement = generateCustomComponentBadge(label);
+    }
+    inlinedSvg = inlinedSvg.replaceAll(`href="${url}"`, `href="${replacement}"`);
   }
 
   return inlinedSvg;
@@ -66,9 +72,9 @@ export function generateStandaloneSvg(graph: ParsedGraph, title = 'Diagram'): st
   swimlanes.forEach(node => {
     svgContent += `
   <g class="swimlane">
-    <rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="10" ry="10" fill="${node.fillColor || '#f8fafc'}" stroke="${node.strokeColor || '#cbd5e1'}" stroke-width="1.5" stroke-dasharray="4 4" />
-    <path d="M ${node.x} ${node.y + 28} L ${node.x + node.width} ${node.y + 28}" stroke="${node.strokeColor || '#cbd5e1'}" stroke-width="1" />
-    <text x="${node.x + 14}" y="${node.y + 19}" fill="${node.fontColor || '#334155'}" font-size="12" font-weight="700">${escapeXml(node.value)}</text>
+    <rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="10" ry="10" fill="${sanitizeColor(node.fillColor, '#f8fafc')}" stroke="${sanitizeColor(node.strokeColor, '#cbd5e1')}" stroke-width="1.5" stroke-dasharray="4 4" />
+    <path d="M ${node.x} ${node.y + 28} L ${node.x + node.width} ${node.y + 28}" stroke="${sanitizeColor(node.strokeColor, '#cbd5e1')}" stroke-width="1" />
+    <text x="${node.x + 14}" y="${node.y + 19}" fill="${sanitizeColor(node.fontColor, '#334155')}" font-size="12" font-weight="700">${escapeXml(node.value)}</text>
   </g>`;
   });
 
@@ -90,8 +96,8 @@ export function generateStandaloneSvg(graph: ParsedGraph, title = 'Diagram'): st
     if (edge.entryX !== undefined) x2 = tgt.x + tgt.width * edge.entryX;
     if (edge.entryY !== undefined) y2 = tgt.y + tgt.height * edge.entryY;
 
-    const strokeColor = edge.strokeColor || '#475569';
-    const strokeWidth = edge.strokeWidth || 1.5;
+    const strokeColor = sanitizeColor(edge.strokeColor, '#475569');
+    const strokeWidth = Number(edge.strokeWidth) || 1.5;
     const strokeDash = edge.dashed ? 'stroke-dasharray="4 4"' : '';
 
     // Calculate stepped orthogonal path
@@ -128,10 +134,10 @@ export function generateStandaloneSvg(graph: ParsedGraph, title = 'Diagram'): st
 
   // 3. Render Regular Nodes & Brand Icons
   regularNodes.forEach(node => {
-    const fill = node.fillColor || '#ffffff';
-    const stroke = node.strokeColor || '#4f46e5';
-    const fontColor = node.fontColor || '#0f172a';
-    const fontSize = node.fontSize || 12;
+    const fill = sanitizeColor(node.fillColor, '#ffffff');
+    const stroke = sanitizeColor(node.strokeColor, '#4f46e5');
+    const fontColor = sanitizeColor(node.fontColor, '#0f172a');
+    const fontSize = Number(node.fontSize) || 12;
 
     svgContent += `
   <g class="node" filter="url(#shadow)">`;
@@ -142,18 +148,28 @@ export function generateStandaloneSvg(graph: ParsedGraph, title = 'Diagram'): st
       const iconX = node.x + (node.width - iconSize) / 2;
       const iconY = node.y + (node.height - iconSize) / 2;
 
-      // Direct Vector SVG embedding for 100% offline reliability (Zero Broken Images)
-      const lookupKey = `${node.imageUrl || ''} ${node.value || ''} ${node.id || ''}`;
-      const rawIconSvg = getRichCloudIconSvg(lookupKey);
-      const cleanSvg = rawIconSvg
-        .replace(/<\?xml[^>]*\?>/gi, '')
-        .trim()
-        .replace(/<svg\b([^>]*)>/i, `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid meet" $1>`);
+      // Prefer the already-resolved official icon carried on the cell
+      // (data: base64 from embed mode, or an official CDN URL from url mode).
+      // Remote URLs are converted to base64 later by inlineSvgImages().
+      const resolved = node.imageUrl || '';
+      if (resolved.startsWith('data:') || /^https?:\/\//.test(resolved)) {
+        svgContent += `
+        <image x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid meet" href="${escapeXml(resolved)}" />
+      `;
+      } else {
+        // No resolved icon on the cell: fall back to a local vector / custom badge.
+        const lookupKey = `${node.imageUrl || ''} ${node.value || ''} ${node.id || ''}`;
+        const rawIconSvg = getRichCloudIconSvg(lookupKey);
+        const cleanSvg = rawIconSvg
+          .replace(/<\?xml[^>]*\?>/gi, '')
+          .trim()
+          .replace(/<svg\b([^>]*)>/i, `<svg x="${iconX}" y="${iconY}" width="${iconSize}" height="${iconSize}" preserveAspectRatio="xMidYMid meet" $1>`);
 
-      svgContent += `
-        <!-- Direct High-Definition Vector Icon -->
+        svgContent += `
+        <!-- Local fallback vector icon -->
         ${cleanSvg}
       `;
+      }
     } else if (node.shape === 'actor') {
       // Classic Draw.io / UML Actor Stickman
       const midX = node.x + node.width / 2;
@@ -245,6 +261,15 @@ export function generateStandaloneSvg(graph: ParsedGraph, title = 'Diagram'): st
 </svg>`;
   console.log('[drawioExport] generateStandaloneSvg completed, size:', svgContent.length);
   return svgContent;
+}
+
+function sanitizeColor(color: string | undefined, fallback: string): string {
+  if (!color) return fallback;
+  const c = color.trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(c)) return c;
+  if (/^(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\)$/i.test(c)) return c;
+  if (/^[a-zA-Z]+$/.test(c)) return c;
+  return fallback;
 }
 
 function escapeXml(unsafe: string): string {
