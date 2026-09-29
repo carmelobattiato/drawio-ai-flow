@@ -8,6 +8,16 @@ il versioning è MAJOR.MINOR.
 
 ---
 
+## [0.3] — 2026-09-29
+
+### Aggiunto
+- Catalogo icone ufficiali esteso ai vendor enterprise dell'ecosistema partner: Red Hat, OpenShift, IBM, Oracle, MongoDB, Windows, Apache, Linux, Microsoft Office, Fortinet, Microsoft, Azure, AWS, SAP, Salesforce, Adobe, VMware, Cisco, Dell, Intel, NVIDIA, Snowflake, Databricks, Teradata, Cloudera, Kafka, Spark, Hadoop, Elasticsearch, Tableau, MySQL, MariaDB, Palo Alto, Splunk, Okta, Datadog, Grafana, Prometheus, Terraform, Ansible, GitLab, Jenkins, Atlassian, NGINX, Ubuntu, UiPath, MuleSoft. Loghi da `simple-icons`, `@lobehub/icons`, `gilbarbara/logos` e `devicon` (tutti via jsdelivr). Il system prompt cita i nuovi vendor.
+
+### Corretto
+- Corretti gli URL di parecchie icone pre-esistenti che puntavano a slug lobehub inesistenti (es. `docker-color`, `kubernetes-color`, `postgresql-color`, `redis-color`, `firebase-color`, `python-color`, GCP Run/Functions/Pub-Sub) e rendevano icone rotte; ora usano sorgenti ufficiali verificate.
+
+---
+
 ## [0.2] — 2026-09-29
 
 ### Aggiunto
