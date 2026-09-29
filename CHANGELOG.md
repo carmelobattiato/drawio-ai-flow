@@ -8,6 +8,16 @@ il versioning è MAJOR.MINOR.
 
 ---
 
+## [0.4] — 2026-09-29
+
+### Aggiunto
+- Menu interattivo in `setup_and_run.sh` quando la porta è già occupata all'avvio: **1)** ferma il processo precedente e riavvia sulla stessa porta, **2)** scegli una nuova porta (validata 1-65535), **3)** annulla. Il controllo si ripete finché la porta scelta non è libera.
+
+### Corretto
+- `server.ts` ignorava l'argomento `--port` e partiva sempre sulla porta 8090: l'avvio su una porta alternativa risultava vuoto. Ora `resolvePort()` legge `--port`/`-p`/`--port=` da `argv`, poi la variabile d'ambiente `PORT`, infine il default 8090. Lo script esporta anche `PORT` come ulteriore fallback.
+
+---
+
 ## [0.3] — 2026-09-29
 
 ### Aggiunto

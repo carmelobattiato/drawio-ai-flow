@@ -10,7 +10,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = parseInt(process.env.PORT || '8090', 10);
+
+function resolvePort(): number {
+  const argv = process.argv.slice(2);
+  const idx = argv.findIndex((a) => a === '--port' || a === '-p');
+  if (idx !== -1 && argv[idx + 1]) {
+    const p = parseInt(argv[idx + 1], 10);
+    if (!Number.isNaN(p)) return p;
+  }
+  const eq = argv.find((a) => a.startsWith('--port='));
+  if (eq) {
+    const p = parseInt(eq.split('=')[1], 10);
+    if (!Number.isNaN(p)) return p;
+  }
+  return parseInt(process.env.PORT || '8090', 10);
+}
+
+const port = resolvePort();
 
 app.use(express.json({ limit: '30mb' }));
 
