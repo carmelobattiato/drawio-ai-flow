@@ -8,7 +8,8 @@ import { XmlCodeEditor } from './components/XmlCodeEditor';
 import { TemplateGallery } from './components/TemplateGallery';
 import { ApiConfig, ChatMessage, ExtractedDocument, DiagramData, OutputFormatPreference, ImageAttachment, AiProvider } from './types';
 import { DEFAULT_API_CONFIG, generateDiagramResponse } from './services/openai';
-import { extractDrawioXml } from './services/drawioParser';
+import { extractDrawioXml, extractXmlPatch } from './services/drawioParser';
+import { applyXmlPatch } from './services/xmlPatch';
 import { enhanceDrawioXmlWithIcons } from './services/aiIconsCatalog';
 import { TemplateItem } from './services/templates';
 
@@ -54,6 +55,7 @@ Incolla un'immagine, carica un file .drawio o scrivi una richiesta per iniziare!
 
   const [currentDiagram, setCurrentDiagram] = useState<DiagramData | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [patchFallbackNotice, setPatchFallbackNotice] = useState<string | null>(null);
 
   // Modals state
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -133,6 +135,15 @@ Incolla un'immagine, carica un file .drawio o scrivi una richiesta per iniziare!
     setMessages(updatedMessages);
     setIsGenerating(true);
 
+    const botMsgId = `bot_${Date.now()}`;
+    const startTime = Date.now();
+    const upsertBotMsg = (patch: Partial<ChatMessage>) =>
+      setMessages(prev =>
+        prev.some(m => m.id === botMsgId)
+          ? prev.map(m => (m.id === botMsgId ? { ...m, ...patch } : m))
+          : [...prev, { id: botMsgId, role: 'assistant', content: '', timestamp: Date.now(), ...patch }]
+      );
+
     try {
       // Collect image attachments if present
       const imagesToPass: ImageAttachment[] = [];
@@ -151,22 +162,56 @@ Incolla un'immagine, carica un file .drawio o scrivi una richiesta per iniziare!
 
       // If document is a drawio file, we can also set it as current diagram or pass directly
       const xmlContext = docContext?.drawioXml || currentDiagram?.xml;
+      // Patch mode only applies to conversational edits of a diagram already in session
+      // (never to the initial generation or a freshly imported .drawio file).
+      const isPatchEligible = Boolean(currentDiagram) && !docContext?.drawioXml;
 
       // Call AI model
-      const aiResponseText = await generateDiagramResponse({
+      let aiResponseText = await generateDiagramResponse({
         config: apiConfig,
         messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
         currentDiagramXml: xmlContext,
         documentContext: docContext,
         images: imagesToPass.length > 0 ? imagesToPass : undefined,
+        onToken: (fullText) => upsertBotMsg({ content: fullText, isGenerating: true }),
+        patchMode: isPatchEligible,
       });
 
-      // Extract XML if present
-      const extractedXml = extractDrawioXml(aiResponseText);
+      // Extract XML: try a structured patch first (eligible edits only), otherwise
+      // fall back to the full-XML path unchanged.
+      let extractedXml: string | null = null;
+      if (isPatchEligible) {
+        const patchOps = extractXmlPatch(aiResponseText);
+        if (patchOps) {
+          const patched = applyXmlPatch(currentDiagram!.xml, patchOps);
+          if (patched) {
+            extractedXml = patched;
+          } else {
+            // Patch found but not applicable: fall back to a single full-XML retry.
+            setPatchFallbackNotice('Non sono riuscito ad applicare una modifica mirata: sto rigenerando l\'intero diagramma per sicurezza. Un attimo.');
+            setTimeout(() => setPatchFallbackNotice(null), 10000);
+
+            aiResponseText = await generateDiagramResponse({
+              config: apiConfig,
+              messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+              currentDiagramXml: xmlContext,
+              documentContext: docContext,
+              images: imagesToPass.length > 0 ? imagesToPass : undefined,
+              onToken: (fullText) => upsertBotMsg({ content: fullText, isGenerating: true }),
+              patchMode: false,
+            });
+            extractedXml = extractDrawioXml(aiResponseText);
+          }
+        } else {
+          extractedXml = extractDrawioXml(aiResponseText);
+        }
+      } else {
+        extractedXml = extractDrawioXml(aiResponseText);
+      }
       let newDiagramData: DiagramData | undefined;
 
       if (extractedXml) {
-        const enhancedXml = await enhanceDrawioXmlWithIcons(extractedXml, apiConfig.iconMode || 'embed');
+        const enhancedXml = await enhanceDrawioXmlWithIcons(extractedXml, apiConfig.iconMode || 'embed', currentDiagram?.xml);
         newDiagramData = {
           id: `diag_${Date.now()}`,
           title: docContext ? `Workflow: ${docContext.name}` : (currentDiagram ? `${currentDiagram.title} (Modificato)` : 'Diagramma Generato'),
@@ -182,30 +227,28 @@ Incolla un'immagine, carica un file .drawio o scrivi una richiesta per iniziare!
       // Clean message text by removing the raw XML block from user chat text if diagram viewer is shown
       let cleanContent = aiResponseText;
       if (extractedXml) {
-        cleanContent = aiResponseText.replace(/```(?:xml|drawio)?[\s\S]*?```/i, '').trim();
+        cleanContent = aiResponseText
+          .replace(/```(?:xml|drawio)?[\s\S]*?```/i, '')
+          .replace(/```drawio-patch[\s\S]*?```/i, '')
+          .trim();
         if (!cleanContent) {
           cleanContent = 'Ecco il diagramma Draw.io elaborato con successo in Light Mode. Puoi esplorarlo sul canvas, modificarlo ulteriormente o esportarlo in PNG / .drawio:';
         }
       }
 
-      const botMsg: ChatMessage = {
-        id: `bot_${Date.now()}`,
-        role: 'assistant',
+      upsertBotMsg({
         content: cleanContent,
-        timestamp: Date.now(),
         diagram: newDiagramData,
-      };
-
-      setMessages(prev => [...prev, botMsg]);
+        isGenerating: false,
+        durationMs: Date.now() - startTime,
+      });
     } catch (err: any) {
       console.error('Error generating diagram:', err);
-      const errorMsg: ChatMessage = {
-        id: `bot_err_${Date.now()}`,
-        role: 'assistant',
+      upsertBotMsg({
         content: `⚠️ Si è verificato un errore durante la generazione: **${err?.message || 'Errore imprevisto'}**.\n\nAssicurati di aver impostato una chiave API valida o seleziona un altro modello Google Gemini dal menu a tendina.`,
-        timestamp: Date.now(),
-      };
-      setMessages(prev => [...prev, errorMsg]);
+        isGenerating: false,
+        durationMs: Date.now() - startTime,
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -269,7 +312,7 @@ Genera la struttura XML completa di Draw.io (mxGraphModel) compatibile al 100% c
   // Quick modify from canvas actions
   const handleQuickModify = (instruction: string) => {
     if (!currentDiagram) return;
-    const prompt = `${instruction}. Aggiorna il diagramma Draw.io mantenendo la struttura coerente e restituendo l'XML completo modificato in Light Mode.`;
+    const prompt = `${instruction}. Aggiorna il diagramma Draw.io mantenendo la struttura coerente.`;
     handleSendMessage(prompt);
   };
 
@@ -354,6 +397,11 @@ Puoi:
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden relative flex flex-col">
+        {patchFallbackNotice && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 max-w-md px-4 py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-sm shadow-md animate-in fade-in slide-in-from-top-2">
+            {patchFallbackNotice}
+          </div>
+        )}
         <ChatInterface
           messages={messages}
           isGenerating={isGenerating}

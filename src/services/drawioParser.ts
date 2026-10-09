@@ -1,4 +1,4 @@
-import { DiagramData, DiagramType } from '../types';
+import { DiagramData, DiagramType, XmlPatchOp } from '../types';
 import { getRichCloudIconUrl } from './cloudIconAssets';
 
 export interface ParsedGraphNode {
@@ -75,6 +75,42 @@ export function extractDrawioXml(text: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Extracts a structured ```drawio-patch ... ``` JSON block from AI chat text response
+ * (compact incremental-edit operations, used instead of resending the full XML).
+ * Returns null on any malformed/absent block — caller falls back to full-XML handling.
+ */
+export function extractXmlPatch(text: string): XmlPatchOp[] | null {
+  if (!text) return null;
+
+  const match = text.match(/```drawio-patch\s*([\s\S]*?)```/i);
+  if (!match) return null;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(match[1].trim());
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.ops) || parsed.ops.length === 0) {
+    return null;
+  }
+
+  for (const entry of parsed.ops) {
+    if (!entry || typeof entry !== 'object') return null;
+    if (entry.op === 'update' || entry.op === 'delete') {
+      if (typeof entry.id !== 'string' || !entry.id) return null;
+    } else if (entry.op === 'add') {
+      if (typeof entry.xml !== 'string' || !entry.xml) return null;
+    } else {
+      return null;
+    }
+  }
+
+  return parsed.ops as XmlPatchOp[];
 }
 
 function wrapInMxFileIfNeeded(xml: string): string {
@@ -302,13 +338,25 @@ export function parseMxGraphXml(xml: string): ParsedGraph {
 
 function cleanHtmlLabel(str: string): string {
   if (!str) return '';
-  return str
+  let out = str
     .replace(/<br\s*[\/]?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
     .replace(/<b>(.*?)<\/b>/gi, '$1')
     .replace(/<strong>(.*?)<\/strong>/gi, '$1')
-    .replace(/<[^>]+>/g, '')
-    .trim();
+    .replace(/<[^>]+>/g, '');
+
+  // Some models double-escape XML entities when writing attribute values
+  // (e.g. "&amp;lt;br&amp;gt;" instead of "<br>"), which DOMParser decodes
+  // only once, leaving literal entity text like "&lt;br&gt;"/"&amp;" visible
+  // on screen. Decode one more level and strip any tag this exposes.
+  out = out
+    .replace(/&lt;br\s*\/?&gt;/gi, '\n')
+    .replace(/&lt;\/p&gt;/gi, '\n')
+    .replace(/&lt;[^&]*?&gt;/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"');
+
+  return out.trim();
 }
 
 /**

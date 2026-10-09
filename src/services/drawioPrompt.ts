@@ -18,6 +18,7 @@ Quando nel contesto è presente un **DIAGRAMMA ATTUALE / XML DI PARTENZA**:
    - Mantieni inalterati i container, le swimlane e i percorsi già tracciati.
 3. **MINIMIZZAZIONE DELLE DIFFERENZE**:
    - Aggiungi solo i nuovi nodi/connettori richiesti dall'utente, posizionandoli nello spazio logico corretto con ID incrementali univoci (es. id="node_added_1", id="edge_added_1").
+   - **PRIMA di scegliere x/y per un nodo aggiunto dentro un container già popolato**: controlla le coordinate/geometrie dei nodi fratelli già presenti in quel container e scegli uno spazio libero (rispettando le distanze minime della sezione 5). Se non c'è spazio sufficiente, allarga anche la geometry (width/height) del container padre con un'operazione/aggiornamento dedicato, invece di sovrapporre il nuovo nodo a quelli esistenti.
    - Se l'utente chiede di modificare un componente (es. *"sostituisci MySQL con Aurora"*), aggiorna SOLO quel nodo (cambiando valore/stile) preservando la sua posizione e i connettori collegati.
    - Se l'utente chiede di rimuovere un componente, cancella solo quel nodo e i relativi connettori.
 4. **COERENZA DI FLUSSO**: Rispetta l'orientamento originale (orizzontale o verticale) senza stravolgere la geometria.
@@ -50,6 +51,9 @@ Usa SEMPRE la sintassi \`shape=image;image=URL_ICONA;\` o gli stencil ufficiali:
 **Sintassi Nodo con Icona/Logo Ufficiale**:
 \`style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;align=center;aspect=fixed;imageAspect=0;image=URL_ICONA;"\`
 *Dimensioni consigliate: width="64" height="64" (o 60x60)*
+
+**Etichette a due righe (titolo + sottotitolo)**: per aggiungere una seconda riga descrittiva sotto il nome del componente, separa le due righe con l'entità XML \`&#10;\` (NON usare mai \`<br>\`, \`<span>\` o altri tag HTML dentro l'attributo \`value\`: sono difficili da scappare correttamente dentro le virgolette dell'XML e possono corrompere l'attributo). Esempio corretto:
+\`value="Azure Database for PostgreSQL&#10;Relational Database"\`
 
 ---
 
@@ -133,6 +137,32 @@ Per concetti generici standard (sviluppatore, utente, microservizi, database gen
 
 Fornisci una sintesi elegante e professionale in lingua italiana assieme all'XML generato.`;
 
-export const DRAWIO_PROMPT_DOC_ANALYSIS = `Analizza questo documento in Markdown estratto. 
+export const DRAWIO_PATCH_MODE_INSTRUCTIONS = `
+
+---
+
+### ✂️ MODALITÀ PATCH STRUTTURATA (ATTIVA SOLO ORA - SOVRASCRIVE LA REGOLA "OUTPUT COMPLETO"):
+Per QUESTA richiesta, poiché si tratta di una modifica mirata a un diagramma già esistente, NON devi restituire l'XML completo. Devi restituire SOLO un elenco di operazioni puntuali (patch) da applicare al diagramma attuale, in un blocco \`\`\`drawio-patch ... \`\`\` contenente un oggetto JSON con questa forma:
+
+\`\`\`drawio-patch
+{
+  "ops": [
+    { "op": "update", "id": "ID_ESISTENTE", "value": "Nuova Etichetta", "style": "nuovo-stile-completo-se-cambia", "geometry": { "x": 100, "y": 200, "width": 64, "height": 64 } },
+    { "op": "add", "xml": "<mxCell id=\\"nuovo_id_univoco\\" value=\\"Etichetta\\" style=\\"...\\" vertex=\\"1\\" parent=\\"1\\"><mxGeometry x=\\"..\\" y=\\"..\\" width=\\"..\\" height=\\"..\\" as=\\"geometry\\"/></mxCell>" },
+    { "op": "delete", "id": "ID_DA_RIMUOVERE" }
+  ]
+}
+\`\`\`
+
+REGOLE TASSATIVE DELLA MODALITÀ PATCH:
+1. **RIUSA GLI ID ESATTI**: per \`update\` e \`delete\` usa l'\`id\` esattamente come compare nell'XML attuale (es. \`node_db_mysql\`, \`edge_api_to_cache\`). Non inventare né approssimare un id.
+2. **UPDATE = SOLO CIÒ CHE CAMBIA**: in \`update\` includi solo i campi che vuoi effettivamente modificare (\`value\`, \`style\`, \`geometry\`). Non serve ripetere l'intera cella.
+3. **ADD = CELLA COMPLETA E AUTOSUFFICIENTE**: ogni \`add\` deve contenere un singolo \`<mxCell>\` valido e completo, con \`id\` nuovo e univoco (mai riusare un id esistente), convenzione \`node_added_N\` / \`edge_added_N\`, \`parent\` esplicito (di norma \`"1"\`), e per i connettori anche \`source\`/\`target\` validi. Se il \`parent\` indicato ha già altri nodi figli, controlla le loro geometrie nell'XML attuale e scegli x/y che non si sovrappongano (se non c'è spazio, aggiungi anche un'operazione \`update\` che allarga la geometry del container).
+4. **RIMOZIONE DI UN NODO = RIMUOVI ANCHE I SUOI CONNETTORI**: se elimini un nodo, aggiungi un'operazione \`delete\` separata per OGNI edge che ha quel nodo come \`source\` o \`target\`. Non esiste cancellazione a cascata automatica: se non elimini esplicitamente l'edge, resterà orfano ed è un errore.
+5. **NESSUN RIPOSIZIONAMENTO/RICABLAGGIO IMPLICITO**: per spostare un edge su un nuovo source/target, non modificarlo con \`update\`: eliminalo con \`delete\` e ricrealo con \`add\`.
+6. **NIENTE TESTO XML FUORI DAL BLOCCO PATCH**: non includere in questa risposta alcun blocco \`\`\`xml\`\`\` con l'XML completo. Fornisci comunque una breve sintesi testuale in italiano di cosa hai modificato, fuori dal blocco \`\`\`drawio-patch\`\`\`.
+7. **SE LA MODIFICA RICHIESTA È TROPPO VASTA O STRUTTURALE** per essere espressa come poche operazioni puntuali (es. riprogettare l'intero layout, cambiare orientamento globale, ristrutturare tutti i container), allora IGNORA questa modalità patch e torna alla regola standard: restituisci l'intero XML in un blocco \`\`\`xml\`\`\`.`;
+
+export const DRAWIO_PROMPT_DOC_ANALYSIS = `Analizza questo documento in Markdown estratto.
 Identifica i workflow, componenti, provider LLM, architetture cloud o modelli dati.
 Presenta una sintesi del flusso e genera il diagramma Draw.io architetturale corrispondente con i loghi ufficiali e gli stencil appropriati in Light Mode.`;

@@ -10,6 +10,7 @@ import {
   Check, 
   ArrowRight, 
   Loader2,
+  Clock,
   RefreshCw,
   Code,
   Copy,
@@ -58,6 +59,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isDragOver, setIsDragOver] = useState(false);
   const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -71,6 +73,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages, isGenerating]);
+
+  // Live elapsed-time counter shown while the model is generating
+  useEffect(() => {
+    if (!isGenerating) return;
+    setElapsedMs(0);
+    const start = Date.now();
+    const id = setInterval(() => setElapsedMs(Date.now() - start), 200);
+    return () => clearInterval(id);
+  }, [isGenerating]);
+
+  const formatDuration = (ms: number) => {
+    const totalSec = ms / 1000;
+    if (totalSec < 60) return `${totalSec.toFixed(1)}s`;
+    const m = Math.floor(totalSec / 60);
+    const s = Math.floor(totalSec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
 
   // Handle clipboard paste (e.g. Ctrl+V with image screenshot)
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -380,6 +399,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     )}
                   </button>
 
+                  {/* Persisted generation time for assistant messages */}
+                  {!isUser && msg.durationMs != null && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 text-slate-400 font-medium tabular-nums">
+                      <Clock className="w-3.5 h-3.5" /> Generato in {formatDuration(msg.durationMs)}
+                    </span>
+                  )}
+
                   {/* Retry button for User messages */}
                   {isUser && (
                     <button
@@ -441,6 +467,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <div className="p-4 bg-white border border-slate-200 rounded-2xl rounded-tl-sm shadow-sm flex items-center gap-3 text-xs font-semibold text-slate-700">
               <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
               <span>Generazione o modifica del diagramma Draw.io in corso...</span>
+              <span className="inline-flex items-center gap-1 text-indigo-600 tabular-nums">
+                <Clock className="w-3.5 h-3.5" /> {formatDuration(elapsedMs)}
+              </span>
             </div>
           </div>
         )}

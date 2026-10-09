@@ -640,7 +640,7 @@ export function getDrawioBrandIconStyle(icon: IconDefinition): string {
  * - Converts cloud/AI components into full-color vector icons
  * - Generates custom vector badges for any unrecognized components so ZERO broken icons ever appear!
  */
-export async function enhanceDrawioXmlWithIcons(xml: string, iconMode: IconMode = 'embed'): Promise<string> {
+export async function enhanceDrawioXmlWithIcons(xml: string, iconMode: IconMode = 'embed', previousXml?: string): Promise<string> {
   if (!xml || typeof window === 'undefined') return xml;
 
   try {
@@ -649,15 +649,55 @@ export async function enhanceDrawioXmlWithIcons(xml: string, iconMode: IconMode 
     const parserErrors = doc.getElementsByTagName('parsererror');
     if (parserErrors.length > 0) return xml;
 
+    // Build a lookup of previously-resolved icon styles by id, so unchanged nodes
+    // keep the exact same icon across regenerations instead of being re-matched
+    // from scratch (which can flip badge<->official-logo non-deterministically
+    // when the model rewrites the whole XML and doesn't preserve `image=`).
+    const previousIconsById = new Map<string, { style: string; cleanValue: string }>();
+    if (previousXml) {
+      try {
+        const prevDoc = parser.parseFromString(previousXml, 'text/xml');
+        if (prevDoc.getElementsByTagName('parsererror').length === 0) {
+          for (const prevCell of Array.from(prevDoc.querySelectorAll('mxCell[vertex="1"]'))) {
+            const prevStyle = prevCell.getAttribute('style') || '';
+            if (!prevStyle.includes('shape=image')) continue;
+            const prevId = prevCell.getAttribute('id');
+            if (!prevId) continue;
+            const prevValue = (prevCell.getAttribute('value') || '').replace(/<[^>]+>/g, '').trim();
+            previousIconsById.set(prevId, { style: prevStyle, cleanValue: prevValue });
+          }
+        }
+      } catch {
+        // Malformed previous XML: ignore, fall back to fresh resolution for everything.
+      }
+    }
+
     const cells = Array.from(doc.querySelectorAll('mxCell[vertex="1"]'));
     let modified = false;
 
+    // First pass (sync): decide which cells become icons, then resolve all icons
+    // in parallel — sequential CDN fetches (5s timeout each) were the main
+    // post-response bottleneck.
+    const toResolve: { cell: Element; cleanValue: string; existingImageUrl: string | undefined; geom: Element | null }[] = [];
+
     for (const cell of cells) {
+      const id = cell.getAttribute('id');
       const value = cell.getAttribute('value') || '';
       const style = cell.getAttribute('style') || '';
       const cleanValue = value.replace(/<[^>]+>/g, '').trim();
 
       if (!cleanValue) continue;
+
+      // Stable-icon fast path: same id, same label as the previous diagram ->
+      // reuse the exact previous style verbatim (no re-fetch, no re-match).
+      const previous = id ? previousIconsById.get(id) : undefined;
+      if (previous && previous.cleanValue === cleanValue) {
+        if (style !== previous.style) {
+          cell.setAttribute('style', previous.style);
+          modified = true;
+        }
+        continue;
+      }
 
       const isSwimlane = style.includes('swimlane') || style.includes('shape=swimlane');
       const isRhombus = style.includes('rhombus') || style.includes('shape=rhombus');
@@ -682,16 +722,24 @@ export async function enhanceDrawioXmlWithIcons(xml: string, iconMode: IconMode 
 
       if (isImage || (isRecognizedService && width <= 140 && height <= 140)) {
         const existingImageUrl = style.match(/image=([^;]+)/)?.[1];
-        const resolvedIcon = await resolveCellIcon(cleanValue, existingImageUrl, iconMode);
-        const newStyle = `shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;align=center;aspect=fixed;imageAspect=0;image=${resolvedIcon};`;
-        cell.setAttribute('style', newStyle);
-        if (geom && (geom.getAttribute('width') !== '64' || geom.getAttribute('height') !== '64')) {
-          geom.setAttribute('width', '64');
-          geom.setAttribute('height', '64');
-        }
-        modified = true;
+        toResolve.push({ cell, cleanValue, existingImageUrl, geom });
       }
     }
+
+    const resolvedIcons = await Promise.all(
+      toResolve.map(item => resolveCellIcon(item.cleanValue, item.existingImageUrl, iconMode))
+    );
+
+    toResolve.forEach(({ cell, geom }, i) => {
+      const resolvedIcon = resolvedIcons[i];
+      const newStyle = `shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=default;verticalAlign=top;align=center;aspect=fixed;imageAspect=0;image=${resolvedIcon};`;
+      cell.setAttribute('style', newStyle);
+      if (geom && (geom.getAttribute('width') !== '64' || geom.getAttribute('height') !== '64')) {
+        geom.setAttribute('width', '64');
+        geom.setAttribute('height', '64');
+      }
+      modified = true;
+    });
 
     if (modified) {
       const serializer = new XMLSerializer();

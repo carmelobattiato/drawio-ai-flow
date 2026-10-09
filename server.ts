@@ -153,48 +153,55 @@ app.post('/api/gemini/generate', async (req, res) => {
       config.temperature = temperature;
     }
 
-    const candidateModels = [
-      requestedModel,
-      ...(requestedModel !== 'gemini-2.5-flash' ? ['gemini-2.5-flash'] : []),
-      ...(requestedModel !== 'gemini-3.7-flash' ? ['gemini-3.7-flash'] : []),
-      ...(requestedModel !== 'gemini-3.8-flash' ? ['gemini-3.8-flash'] : []),
-      ...(requestedModel !== 'gemini-3.1-flash-lite' ? ['gemini-3.1-flash-lite'] : []),
-    ];
-
-    let lastError: any = null;
-    let successfulText = '';
-    let usedModel = requestedModel;
-
-    for (const candidate of candidateModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model: candidate,
-          contents,
-          config,
-        });
-
-        if (response.text && response.text.trim().length > 0) {
-          successfulText = response.text;
-          usedModel = candidate;
-          break;
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[Gemini Engine] Model ${candidate} returned: ${err?.message || err}. Fallback...`);
+    // Stream a single attempt on the requested model. No fallback chain:
+    // on failure we return a clear error so the user can switch model manually.
+    let headersSent = false;
+    const ensureStreamHeaders = () => {
+      if (!headersSent) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        (res as any).flushHeaders?.();
+        headersSent = true;
       }
-    }
+    };
 
-    if (!successfulText) {
-      const errMsg = lastError?.message || 'Errore imprevisto durante la generazione con Gemini.';
-      return res.status(500).json({
-        error: { message: errMsg }
+    try {
+      const stream = await ai.models.generateContentStream({
+        model: requestedModel,
+        contents,
+        config,
       });
-    }
 
-    return res.json({
-      text: successfulText,
-      model: usedModel,
-    });
+      let gotContent = false;
+      for await (const chunk of stream) {
+        const delta = chunk.text;
+        if (delta) {
+          gotContent = true;
+          ensureStreamHeaders();
+          res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+        }
+      }
+
+      if (!gotContent) {
+        return res.status(500).json({
+          error: { message: `Il modello Gemini "${requestedModel}" non ha restituito alcun contenuto. Prova a selezionare un altro modello.` }
+        });
+      }
+
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    } catch (err: any) {
+      const detail = err?.message || String(err);
+      const message = `Il modello Gemini "${requestedModel}" ha restituito un errore: ${detail}. Prova a selezionare un altro modello.`;
+      console.warn(`[Gemini Engine] ${message}`);
+      if (headersSent) {
+        res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      return res.status(500).json({ error: { message } });
+    }
   } catch (error: any) {
     console.error('Gemini Generate Endpoint Error:', error);
     return res.status(500).json({
@@ -336,6 +343,7 @@ app.post('/api/custom-ai/generate', async (req, res) => {
     const bodyPayload: any = {
       model: targetModel,
       messages: apiMessages,
+      stream: true,
     };
 
     if (!isReasoning && temperature !== undefined) {
@@ -351,20 +359,55 @@ app.post('/api/custom-ai/generate', async (req, res) => {
       body: JSON.stringify(bodyPayload),
     });
 
-    if (!response.ok) {
+    if (!response.ok || !response.body) {
       const errJson = await response.json().catch(() => ({ error: { message: `HTTP ${response.status} ${response.statusText}` } }));
-      return res.status(response.status).json({
-        error: { message: errJson?.error?.message || `Errore Custom AI HTTP ${response.status}` }
+      const detail = errJson?.error?.message || errJson?.error || `HTTP ${response.status}`;
+      return res.status(response.status || 500).json({
+        error: { message: `Il modello "${targetModel}" ha restituito un errore: ${detail}. Prova a selezionare un altro modello.` }
       });
     }
 
-    const data = await response.json();
-    const outputText = data.choices?.[0]?.message?.content || '';
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    (res as any).flushHeaders?.();
 
-    return res.json({
-      text: outputText,
-      model: targetModel,
-    });
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let gotContent = false;
+
+    try {
+      for await (const chunk of response.body as any) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice('data:'.length).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const json = JSON.parse(payload);
+            const delta = json.choices?.[0]?.delta?.content;
+            if (delta) {
+              gotContent = true;
+              res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+            }
+          } catch {
+            // ignore partial / non-JSON keep-alive lines
+          }
+        }
+      }
+    } catch (streamErr: any) {
+      res.write(`data: ${JSON.stringify({ error: `Errore durante lo streaming da Custom AI: ${streamErr?.message || streamErr}` })}\n\n`);
+    }
+
+    if (!gotContent) {
+      res.write(`data: ${JSON.stringify({ error: `Il modello "${targetModel}" non ha restituito alcun contenuto. Prova a selezionare un altro modello.` })}\n\n`);
+    }
+
+    res.write('data: [DONE]\n\n');
+    return res.end();
   } catch (error: any) {
     console.error('Custom AI Generate Error:', error);
     return res.status(500).json({

@@ -84,12 +84,18 @@ export interface ChatMessage {
   image?: ImageAttachment;
   diagram?: DiagramData;
   isGenerating?: boolean;
+  durationMs?: number;
   optionsPrompt?: {
     type: 'output_choice' | 'diagram_type_choice' | 'clarification';
     question: string;
     choices: { label: string; value: string; description?: string }[];
   };
 }
+
+export type XmlPatchOp =
+  | { op: 'update'; id: string; value?: string; style?: string; geometry?: { x?: number; y?: number; width?: number; height?: number } }
+  | { op: 'add'; xml: string }
+  | { op: 'delete'; id: string };
 
 export interface DiagramTheme {
   name: string;

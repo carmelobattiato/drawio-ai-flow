@@ -18,6 +18,26 @@ il versioning è MAJOR.MINOR.
 
 ---
 
+## [0.5] — 2026-10-09
+
+### Aggiunto
+- Streaming delle risposte LLM (SSE) sia per Google Gemini che per Custom AI: il testo appare progressivamente invece di comparire tutto insieme a fine generazione.
+- Timer live durante la generazione (visibile nell'indicatore "Generazione in corso") e durata finale mostrata su ogni messaggio dell'assistente.
+- Sistema di **patch strutturata** per le modifiche di un diagramma già generato: invece di riscrivere l'intero XML, il modello può restituire un elenco compatto di operazioni (`update`/`add`/`delete` per id), applicate deterministicamente dal client. Fallback automatico a rigenerazione XML completa se la patch non è applicabile, con notifica a scomparsa.
+- Posizionamento automatico anti-sovrapposizione: quando una patch aggiunge un nodo a un container già popolato, il codice (non il modello) sceglie una posizione libera e allarga il container se necessario.
+- Riuso delle icone già risolte tra una modifica e l'altra dello stesso diagramma (stesso id + stessa etichetta): nessuna ri-valutazione/ri-fetch per i nodi non toccati dalla richiesta.
+- Nuova convenzione di prompt per etichette a due righe (`&#10;` invece di `<br><span>`), più robusta e priva di problemi di escaping XML.
+
+### Cambiato
+- Risoluzione delle icone ufficiali ora in parallelo (`Promise.all`) invece che in sequenza: tempo di attesa potenzialmente da N×5s a ~5s totali su diagrammi con molte icone.
+- Rimossa la catena di fallback su più modelli Gemini in caso di errore: ora un solo tentativo sul modello scelto, con messaggio di errore esplicito (nome modello + causa) così l'utente può cambiarlo manualmente senza attese inutili.
+
+### Corretto
+- Etichette con testo HTML visibile letteralmente (es. `<br><span style="...">`) causate da doppio escaping delle entità XML da parte del modello: ora decodificate correttamente.
+- Icone che cambiavano aspetto (badge ↔ logo ufficiale) tra una modifica e l'altra dello stesso diagramma anche su nodi non toccati dalla richiesta.
+
+---
+
 ## [0.3] — 2026-09-29
 
 ### Aggiunto

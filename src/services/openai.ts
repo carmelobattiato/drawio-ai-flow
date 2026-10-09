@@ -1,5 +1,5 @@
 import { ApiConfig, ExtractedDocument, ImageAttachment } from '../types';
-import { DRAWIO_SYSTEM_PROMPT } from './drawioPrompt';
+import { DRAWIO_SYSTEM_PROMPT, DRAWIO_PATCH_MODE_INSTRUCTIONS } from './drawioPrompt';
 
 export const AVAILABLE_GEMINI_MODELS = [
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Ultra-Stabile & Veloce)', tag: 'Consigliato' },
@@ -130,18 +130,61 @@ export interface GenerationRequest {
   documentContext?: ExtractedDocument;
   images?: ImageAttachment[];
   customInstruction?: string;
+  onToken?: (fullText: string) => void;
+  patchMode?: boolean;
+}
+
+/**
+ * Reads an SSE stream (`data: {"delta":"..."}` / `data: {"error":"..."}` / `data: [DONE]`),
+ * invokes onToken with the accumulated text, and returns the full text.
+ */
+async function readSseStream(response: Response, onToken?: (fullText: string) => void): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('Risposta in streaming non disponibile.');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice('data:'.length).trim();
+      if (payload === '[DONE]') continue;
+      let json: any;
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue; // partial / keep-alive line
+      }
+      if (json.error) throw new Error(json.error);
+      if (json.delta) {
+        fullText += json.delta;
+        onToken?.(fullText);
+      }
+    }
+  }
+  return fullText;
 }
 
 /**
  * Calls AI model (Google Gemini or Custom AI OpenAI Standard)
  */
 export async function generateDiagramResponse(req: GenerationRequest): Promise<string> {
-  const { config, messages, currentDiagramXml, documentContext, images, customInstruction } = req;
+  const { config, messages, currentDiagramXml, documentContext, images, customInstruction, onToken, patchMode } = req;
 
   // Build full system content
   let systemContent = DRAWIO_SYSTEM_PROMPT;
   if (currentDiagramXml) {
     systemContent += `\n\n### DIAGRAMMA ATTUALE IN USO (da aggiornare o modificare su richiesta dell'utente):\n\`\`\`xml\n${currentDiagramXml}\n\`\`\``;
+    if (patchMode) {
+      systemContent += DRAWIO_PATCH_MODE_INSTRUCTIONS;
+    }
   }
   if (documentContext) {
     if (documentContext.drawioXml) {
@@ -184,8 +227,7 @@ export async function generateDiagramResponse(req: GenerationRequest): Promise<s
       throw new Error(`Gemini Error: ${errorJson?.error?.message || `HTTP ${response.status}`}`);
     }
 
-    const data = await response.json();
-    return data.text || '';
+    return await readSseStream(response, onToken);
   }
 
   // 2. Custom AI (OpenAI API Standard)
@@ -221,6 +263,5 @@ export async function generateDiagramResponse(req: GenerationRequest): Promise<s
     throw new Error(`Custom AI Error (${baseUrl}): ${errorJson?.error?.message || errorJson?.error || `HTTP ${response.status}`}`);
   }
 
-  const data = await response.json();
-  return data.text || '';
+  return await readSseStream(response, onToken);
 }
